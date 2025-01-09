@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Camera, StopCircle } from "lucide-react";
 import * as cocoSsd from "@tensorflow-models/coco-ssd";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useToast } from "@/hooks/use-toast";
 import "@tensorflow/tfjs";
 
 interface Instruction {
@@ -14,15 +15,52 @@ interface Instruction {
 
 const Detection = () => {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isActive, setIsActive] = useState(false);
   const [model, setModel] = useState<cocoSsd.ObjectDetection | null>(null);
   const [videoLoaded, setVideoLoaded] = useState(false);
   const [instructions, setInstructions] = useState<Instruction[]>([]);
+  const [language, setLanguage] = useState(() => localStorage.getItem("language") || "en");
+
+  const speakInstruction = async (text: string) => {
+    try {
+      const response = await fetch("http://localhost:5000/speak", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          text,
+          language
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to generate speech");
+      }
+
+      const audioBlob = await response.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+      await audio.play();
+
+      // Cleanup
+      audio.onended = () => {
+        URL.revokeObjectURL(audioUrl);
+      };
+    } catch (error) {
+      console.error("Speech generation error:", error);
+      toast({
+        title: "Error",
+        description: "Failed to generate voice instruction",
+        variant: "destructive",
+      });
+    }
+  };
 
   const estimateDistance = (objectHeight: number, frameHeight: number): string => {
-    // Using the relative size of object to estimate distance
     const relativeSize = objectHeight / frameHeight;
     if (relativeSize > 0.5) return "Very Close (< 1m)";
     if (relativeSize > 0.3) return "Close (1-2m)";
@@ -62,6 +100,11 @@ const Detection = () => {
       }
     } catch (err) {
       console.error("Error accessing camera:", err);
+      toast({
+        title: "Error",
+        description: "Failed to access camera",
+        variant: "destructive",
+      });
     }
   };
 
@@ -78,6 +121,8 @@ const Detection = () => {
 
   useEffect(() => {
     let animationId: number;
+    let lastSpokenTime = 0;
+    const SPEAK_COOLDOWN = 3000; // 3 seconds cooldown between voice instructions
 
     const detect = async () => {
       if (!model || !videoRef.current || !canvasRef.current || !isActive || !videoLoaded) return;
@@ -129,27 +174,37 @@ const Detection = () => {
         ctx.font = "18px Arial";
         ctx.fillText(`${prediction.class} - ${distance}`, x + 5, y - 10);
 
-        // Determine region and give instructions with distance
         const baseInstruction = distance === "Very Close (< 1m)" ? "CAUTION! " : "";
+        let instruction = "";
         
         if (objectCenterX < leftBoundary) {
+          instruction = `${baseInstruction}${prediction.class} on the left (${distance}), move to the center or right.`;
           newInstructions.push({
-            text: `${baseInstruction}${prediction.class} on the left (${distance}), move to the center or right.`,
+            text: instruction,
             region: "left",
             distance
           });
         } else if (objectCenterX > rightBoundary) {
+          instruction = `${baseInstruction}${prediction.class} on the right (${distance}), move to the center or left.`;
           newInstructions.push({
-            text: `${baseInstruction}${prediction.class} on the right (${distance}), move to the center or left.`,
+            text: instruction,
             region: "right",
             distance
           });
         } else {
+          instruction = `${baseInstruction}${prediction.class} in the center (${distance}), avoid or move left/right.`;
           newInstructions.push({
-            text: `${baseInstruction}${prediction.class} in the center (${distance}), avoid or move left/right.`,
+            text: instruction,
             region: "center",
             distance
           });
+        }
+
+        // Speak instruction if cooldown has passed
+        const currentTime = Date.now();
+        if (currentTime - lastSpokenTime > SPEAK_COOLDOWN) {
+          speakInstruction(instruction);
+          lastSpokenTime = currentTime;
         }
       });
 
@@ -166,7 +221,7 @@ const Detection = () => {
         cancelAnimationFrame(animationId);
       }
     };
-  }, [model, isActive, videoLoaded]);
+  }, [model, isActive, videoLoaded, language]);
 
   return (
     <div className="min-h-screen p-4">
