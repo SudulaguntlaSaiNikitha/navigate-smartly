@@ -3,7 +3,13 @@ import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { Camera, StopCircle } from "lucide-react";
 import * as cocoSsd from "@tensorflow-models/coco-ssd";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import "@tensorflow/tfjs";
+
+interface Instruction {
+  text: string;
+  region: "left" | "center" | "right";
+}
 
 const Detection = () => {
   const navigate = useNavigate();
@@ -12,6 +18,7 @@ const Detection = () => {
   const [isActive, setIsActive] = useState(false);
   const [model, setModel] = useState<cocoSsd.ObjectDetection | null>(null);
   const [videoLoaded, setVideoLoaded] = useState(false);
+  const [instructions, setInstructions] = useState<Instruction[]>([]);
 
   useEffect(() => {
     const loadModel = async () => {
@@ -55,6 +62,7 @@ const Detection = () => {
       videoRef.current.srcObject = null;
       setIsActive(false);
       setVideoLoaded(false);
+      setInstructions([]);
     }
   };
 
@@ -64,7 +72,6 @@ const Detection = () => {
     const detect = async () => {
       if (!model || !videoRef.current || !canvasRef.current || !isActive || !videoLoaded) return;
 
-      // Ensure video is playing and has valid dimensions
       if (videoRef.current.readyState !== 4 || 
           videoRef.current.videoWidth === 0 || 
           videoRef.current.videoHeight === 0) {
@@ -79,8 +86,25 @@ const Detection = () => {
 
       ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
+      // Draw region divisions
+      const leftBoundary = ctx.canvas.width / 3;
+      const rightBoundary = (2 * ctx.canvas.width) / 3;
+
+      ctx.strokeStyle = "#3B82F6";
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.moveTo(leftBoundary, 0);
+      ctx.lineTo(leftBoundary, ctx.canvas.height);
+      ctx.moveTo(rightBoundary, 0);
+      ctx.lineTo(rightBoundary, ctx.canvas.height);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      const newInstructions: Instruction[] = [];
+
       predictions.forEach(prediction => {
         const [x, y, width, height] = prediction.bbox;
+        const objectCenterX = x + width / 2;
         
         ctx.strokeStyle = "#3B82F6";
         ctx.lineWidth = 2;
@@ -92,8 +116,27 @@ const Detection = () => {
         ctx.fillStyle = "white";
         ctx.font = "18px Arial";
         ctx.fillText(prediction.class, x + 5, y - 5);
+
+        // Determine region and give instructions
+        if (objectCenterX < leftBoundary) {
+          newInstructions.push({
+            text: "Obstacle on the left, move to the center or right.",
+            region: "left"
+          });
+        } else if (objectCenterX > rightBoundary) {
+          newInstructions.push({
+            text: "Obstacle on the right, move to the center or left.",
+            region: "right"
+          });
+        } else {
+          newInstructions.push({
+            text: "Obstacle in the center, avoid or move left/right.",
+            region: "center"
+          });
+        }
       });
 
+      setInstructions(newInstructions);
       animationId = requestAnimationFrame(detect);
     };
 
@@ -148,6 +191,16 @@ const Detection = () => {
             </div>
           )}
         </div>
+
+        {instructions.length > 0 && (
+          <div className="mt-4 space-y-2">
+            {instructions.map((instruction, index) => (
+              <Alert key={index} variant="default" className="border-blue-500">
+                <AlertDescription>{instruction.text}</AlertDescription>
+              </Alert>
+            ))}
+          </div>
+        )}
 
         {isActive && (
           <Button
