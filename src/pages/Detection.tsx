@@ -11,6 +11,7 @@ const Detection = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isActive, setIsActive] = useState(false);
   const [model, setModel] = useState<cocoSsd.ObjectDetection | null>(null);
+  const [videoLoaded, setVideoLoaded] = useState(false);
 
   useEffect(() => {
     const loadModel = async () => {
@@ -24,10 +25,22 @@ const Detection = () => {
   const startCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: "environment" } 
+        video: { 
+          facingMode: "environment",
+          width: { ideal: 640 },
+          height: { ideal: 480 }
+        } 
       });
+      
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.onloadedmetadata = () => {
+          setVideoLoaded(true);
+          if (canvasRef.current) {
+            canvasRef.current.width = videoRef.current!.videoWidth;
+            canvasRef.current.height = videoRef.current!.videoHeight;
+          }
+        };
         setIsActive(true);
       }
     } catch (err) {
@@ -41,6 +54,7 @@ const Detection = () => {
       stream.getTracks().forEach(track => track.stop());
       videoRef.current.srcObject = null;
       setIsActive(false);
+      setVideoLoaded(false);
     }
   };
 
@@ -48,7 +62,15 @@ const Detection = () => {
     let animationId: number;
 
     const detect = async () => {
-      if (!model || !videoRef.current || !canvasRef.current || !isActive) return;
+      if (!model || !videoRef.current || !canvasRef.current || !isActive || !videoLoaded) return;
+
+      // Ensure video is playing and has valid dimensions
+      if (videoRef.current.readyState !== 4 || 
+          videoRef.current.videoWidth === 0 || 
+          videoRef.current.videoHeight === 0) {
+        animationId = requestAnimationFrame(detect);
+        return;
+      }
 
       const predictions = await model.detect(videoRef.current);
       
@@ -75,7 +97,7 @@ const Detection = () => {
       animationId = requestAnimationFrame(detect);
     };
 
-    if (isActive) {
+    if (isActive && videoLoaded) {
       detect();
     }
 
@@ -84,7 +106,7 @@ const Detection = () => {
         cancelAnimationFrame(animationId);
       }
     };
-  }, [model, isActive]);
+  }, [model, isActive, videoLoaded]);
 
   return (
     <div className="min-h-screen p-4">
@@ -100,7 +122,7 @@ const Detection = () => {
           ← Back
         </Button>
 
-        <div className="camera-container">
+        <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-gray-100">
           <video
             ref={videoRef}
             autoPlay
@@ -113,7 +135,7 @@ const Detection = () => {
             className="absolute inset-0 w-full h-full"
           />
           {!isActive && (
-            <div className="camera-overlay">
+            <div className="absolute inset-0 flex items-center justify-center">
               <Button
                 size="lg"
                 className="text-xl"
