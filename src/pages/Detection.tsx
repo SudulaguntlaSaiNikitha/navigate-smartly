@@ -9,6 +9,7 @@ import "@tensorflow/tfjs";
 interface Instruction {
   text: string;
   region: "left" | "center" | "right";
+  distance: string;
 }
 
 const Detection = () => {
@@ -19,6 +20,15 @@ const Detection = () => {
   const [model, setModel] = useState<cocoSsd.ObjectDetection | null>(null);
   const [videoLoaded, setVideoLoaded] = useState(false);
   const [instructions, setInstructions] = useState<Instruction[]>([]);
+
+  const estimateDistance = (objectHeight: number, frameHeight: number): string => {
+    // Using the relative size of object to estimate distance
+    const relativeSize = objectHeight / frameHeight;
+    if (relativeSize > 0.5) return "Very Close (< 1m)";
+    if (relativeSize > 0.3) return "Close (1-2m)";
+    if (relativeSize > 0.15) return "Medium (2-4m)";
+    return "Far (> 4m)";
+  };
 
   useEffect(() => {
     const loadModel = async () => {
@@ -105,33 +115,40 @@ const Detection = () => {
       predictions.forEach(prediction => {
         const [x, y, width, height] = prediction.bbox;
         const objectCenterX = x + width / 2;
+        const distance = estimateDistance(height, ctx.canvas.height);
         
         ctx.strokeStyle = "#3B82F6";
         ctx.lineWidth = 2;
         ctx.strokeRect(x, y, width, height);
 
+        // Draw label with distance
         ctx.fillStyle = "#3B82F6";
-        ctx.fillRect(x, y - 25, prediction.class.length * 14, 25);
+        ctx.fillRect(x, y - 35, prediction.class.length * 14 + distance.length * 8, 35);
         
         ctx.fillStyle = "white";
         ctx.font = "18px Arial";
-        ctx.fillText(prediction.class, x + 5, y - 5);
+        ctx.fillText(`${prediction.class} - ${distance}`, x + 5, y - 10);
 
-        // Determine region and give instructions
+        // Determine region and give instructions with distance
+        const baseInstruction = distance === "Very Close (< 1m)" ? "CAUTION! " : "";
+        
         if (objectCenterX < leftBoundary) {
           newInstructions.push({
-            text: "Obstacle on the left, move to the center or right.",
-            region: "left"
+            text: `${baseInstruction}${prediction.class} on the left (${distance}), move to the center or right.`,
+            region: "left",
+            distance
           });
         } else if (objectCenterX > rightBoundary) {
           newInstructions.push({
-            text: "Obstacle on the right, move to the center or left.",
-            region: "right"
+            text: `${baseInstruction}${prediction.class} on the right (${distance}), move to the center or left.`,
+            region: "right",
+            distance
           });
         } else {
           newInstructions.push({
-            text: "Obstacle in the center, avoid or move left/right.",
-            region: "center"
+            text: `${baseInstruction}${prediction.class} in the center (${distance}), avoid or move left/right.`,
+            region: "center",
+            distance
           });
         }
       });
@@ -195,7 +212,11 @@ const Detection = () => {
         {instructions.length > 0 && (
           <div className="mt-4 space-y-2">
             {instructions.map((instruction, index) => (
-              <Alert key={index} variant="default" className="border-blue-500">
+              <Alert 
+                key={index} 
+                variant="default" 
+                className={`border-blue-500 ${instruction.distance.includes("Very Close") ? "bg-red-100 border-red-500" : ""}`}
+              >
                 <AlertDescription>{instruction.text}</AlertDescription>
               </Alert>
             ))}
