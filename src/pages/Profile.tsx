@@ -61,10 +61,10 @@ const Profile = () => {
           <div className="space-y-2">
             <label className="text-lg font-medium">Preferred Language</label>
             <Select value={language} onValueChange={setLanguage}>
-              <SelectTrigger className="h-12 text-lg">
+              <SelectTrigger className="h-12 text-lg bg-background">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="bg-background border shadow-lg">
                 <SelectItem value="en">English</SelectItem>
                 <SelectItem value="hi">Hindi</SelectItem>
                 <SelectItem value="es">Spanish</SelectItem>
