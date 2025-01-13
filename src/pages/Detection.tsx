@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
-import { Camera, StopCircle, Volume2, VolumeX, Users, Languages } from "lucide-react";
+import { Camera, StopCircle, Volume2, VolumeX, Languages, AlertTriangle } from "lucide-react";
 import * as cocoSsd from "@tensorflow-models/coco-ssd";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
@@ -43,19 +43,17 @@ const Detection = () => {
         }),
       });
 
-      if (!response.ok) {
-        throw new Error("Failed to generate speech");
-      }
+      if (!response.ok) throw new Error("Failed to generate speech");
 
       const audioBlob = await response.blob();
       const audioUrl = URL.createObjectURL(audioBlob);
       const audio = new Audio(audioUrl);
-      await audio.play();
+      
+      if (!isMuted) {
+        await audio.play();
+      }
 
-      // Cleanup
-      audio.onended = () => {
-        URL.revokeObjectURL(audioUrl);
-      };
+      audio.onended = () => URL.revokeObjectURL(audioUrl);
     } catch (error) {
       console.error("Speech generation error:", error);
       toast({
@@ -262,12 +260,12 @@ const Detection = () => {
   };
 
   return (
-    <div className="min-h-screen p-4 bg-gradient-to-b from-gray-900 to-gray-800">
-      <div className="max-w-4xl mx-auto">
+    <div className="min-h-screen p-4 bg-gradient-to-b from-gray-900 via-blue-900 to-gray-900">
+      <div className="max-w-4xl mx-auto space-y-6">
         <div className="flex items-center justify-between mb-6">
           <Button
             variant="ghost"
-            className="text-white hover:text-gray-300"
+            className="text-white hover:text-blue-300 transition-colors"
             onClick={() => {
               stopCamera();
               navigate("/");
@@ -278,30 +276,33 @@ const Detection = () => {
           <div className="flex gap-2">
             <Button
               variant="outline"
-              className="bg-white/10 hover:bg-white/20"
+              className="bg-white/10 hover:bg-white/20 transition-all"
               onClick={toggleMute}
             >
-              {isMuted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
+              {isMuted ? 
+                <VolumeX className="h-5 w-5 text-red-400" /> : 
+                <Volume2 className="h-5 w-5 text-green-400" />
+              }
             </Button>
             <Button
               variant="outline"
-              className="bg-white/10 hover:bg-white/20"
+              className="bg-white/10 hover:bg-white/20 transition-all"
               onClick={() => setShowTranslation(!showTranslation)}
             >
-              <Languages className="h-5 w-5" />
+              <Languages className="h-5 w-5 text-blue-400" />
             </Button>
           </div>
         </div>
 
-        <Card className="bg-black/50 border-none shadow-xl mb-6">
+        <Card className="bg-black/30 border-none shadow-xl backdrop-blur-sm">
           <CardHeader>
             <CardTitle className="text-white flex items-center gap-2">
-              <Users className="h-6 w-6" />
+              <AlertTriangle className="h-6 w-6 text-yellow-400" />
               Navigation Assistant
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="relative aspect-video w-full overflow-hidden rounded-lg">
+            <div className="relative aspect-video w-full overflow-hidden rounded-lg border-2 border-blue-500/30">
               <video
                 ref={videoRef}
                 autoPlay
@@ -314,10 +315,10 @@ const Detection = () => {
                 className="absolute inset-0 w-full h-full"
               />
               {!isActive && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/70">
+                <div className="absolute inset-0 flex items-center justify-center bg-black/70 backdrop-blur-sm">
                   <Button
                     size="lg"
-                    className="text-xl bg-blue-600 hover:bg-blue-700"
+                    className="text-xl bg-blue-600 hover:bg-blue-700 transition-colors"
                     onClick={startCamera}
                     disabled={!model}
                   >
@@ -331,26 +332,33 @@ const Detection = () => {
         </Card>
 
         {instructions.length > 0 && (
-          <div className="space-y-2">
+          <div className="space-y-2 animate-fade-in">
             {instructions.map((instruction, index) => (
               <Alert 
                 key={index} 
                 variant="default" 
                 className={`
-                  border-2 
+                  border-2 backdrop-blur-sm transition-all
                   ${instruction.distance.includes("Very Close") 
-                    ? "bg-red-900/50 border-red-500" 
+                    ? "bg-red-900/50 border-red-500 animate-pulse" 
+                    : instruction.distance.includes("Close")
+                    ? "bg-orange-900/50 border-orange-500"
                     : "bg-blue-900/50 border-blue-500"
                   }
                   text-white
                 `}
               >
-                <AlertDescription className="text-lg">
-                  {instruction.text}
-                  {showTranslation && translatedText && (
-                    <div className="mt-2 text-gray-300 text-sm">
-                      {translatedText}
-                    </div>
+                <AlertDescription className="text-lg flex items-center gap-2">
+                  <div className="flex-1">
+                    {instruction.text}
+                    {showTranslation && translatedText && (
+                      <div className="mt-2 text-gray-300 text-sm">
+                        {translatedText}
+                      </div>
+                    )}
+                  </div>
+                  {instruction.distance.includes("Very Close") && (
+                    <AlertTriangle className="h-6 w-6 text-red-400 animate-pulse" />
                   )}
                 </AlertDescription>
               </Alert>
@@ -362,7 +370,7 @@ const Detection = () => {
           <Button
             variant="destructive"
             size="lg"
-            className="mt-6 w-full text-xl"
+            className="mt-6 w-full text-xl transition-all hover:bg-red-600"
             onClick={stopCamera}
           >
             <StopCircle className="mr-2 h-6 w-6" />
