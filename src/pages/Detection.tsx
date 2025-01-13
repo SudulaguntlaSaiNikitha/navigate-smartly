@@ -32,6 +32,7 @@ const Detection = () => {
 
   const speakInstruction = async (text: string) => {
     try {
+      // Add a check to ensure the backend is reachable
       const response = await fetch("http://localhost:5000/speak", {
         method: "POST",
         headers: {
@@ -43,22 +44,33 @@ const Detection = () => {
         }),
       });
 
-      if (!response.ok) throw new Error("Failed to generate speech");
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
 
       const audioBlob = await response.blob();
       const audioUrl = URL.createObjectURL(audioBlob);
       const audio = new Audio(audioUrl);
       
       if (!isMuted) {
-        await audio.play();
+        try {
+          await audio.play();
+        } catch (playError) {
+          console.error("Audio playback error:", playError);
+          toast({
+            title: "Playback Error",
+            description: "Failed to play audio instruction",
+            variant: "destructive",
+          });
+        }
       }
 
       audio.onended = () => URL.revokeObjectURL(audioUrl);
     } catch (error) {
       console.error("Speech generation error:", error);
       toast({
-        title: "Error",
-        description: "Failed to generate voice instruction",
+        title: "Backend Connection Error",
+        description: "Failed to connect to speech service. Please ensure the backend server is running.",
         variant: "destructive",
       });
     }

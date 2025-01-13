@@ -4,7 +4,7 @@ from gtts import gTTS
 import os
 import tempfile
 import threading
-from datetime import datetime
+from datetime import datetime, time
 import uuid
 import cv2
 import numpy as np
@@ -14,7 +14,14 @@ from torchvision import transforms
 from torchvision.models.detection import fasterrcnn_resnet50_fpn
 
 app = Flask(__name__)
-CORS(app)
+# Configure CORS to accept requests from any origin
+CORS(app, resources={
+    r"/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type"]
+    }
+})
 
 # Create temporary directories
 TEMP_DIR = "temp_audio"
@@ -52,8 +59,13 @@ def cleanup_old_files():
 cleanup_thread = threading.Thread(target=cleanup_old_files, daemon=True)
 cleanup_thread.start()
 
-@app.route('/speak', methods=['POST'])
+@app.route('/speak', methods=['POST', 'OPTIONS'])
 def speak():
+    if request.method == 'OPTIONS':
+        # Handle preflight request
+        response = app.make_default_options_response()
+        return response
+        
     try:
         data = request.get_json()
         text = data.get('text', '')
@@ -72,6 +84,7 @@ def speak():
             download_name=filename
         )
     except Exception as e:
+        print(f"Error in /speak endpoint: {str(e)}")
         return {'error': str(e)}, 500
 
 @app.route('/translate', methods=['POST'])
@@ -153,4 +166,4 @@ def detect_persons():
         return {'error': str(e)}, 500
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0', port=5000)
