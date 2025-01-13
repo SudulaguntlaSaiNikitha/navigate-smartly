@@ -1,4 +1,4 @@
-from flask import Flask, request, send_file
+from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 from gtts import gTTS
 import os
@@ -6,29 +6,49 @@ import tempfile
 import threading
 from datetime import datetime
 import uuid
+import cv2
+import numpy as np
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from torchvision import transforms
+from torchvision.models.detection import fasterrcnn_resnet50_fpn
 
 app = Flask(__name__)
 CORS(app)
 
-# Create a temporary directory for audio files
+# Create temporary directories
 TEMP_DIR = "temp_audio"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# Cleanup old files periodically
+# Load ML models
+device = "cuda" if torch.cuda.is_available() else "cpu"
+language_model_name = "Qwen/Qwen2-1.5B-Instruct"
+
+try:
+    language_model = AutoModelForCausalLM.from_pretrained(
+        language_model_name,
+        torch_dtype="auto",
+        device_map="auto"
+    )
+    tokenizer = AutoTokenizer.from_pretrained(language_model_name)
+    person_detection_model = fasterrcnn_resnet50_fpn(pretrained=True)
+    person_detection_model.eval()
+except Exception as e:
+    print(f"Error loading models: {e}")
+
 def cleanup_old_files():
     while True:
         current_time = datetime.now()
         for filename in os.listdir(TEMP_DIR):
             file_path = os.path.join(TEMP_DIR, filename)
             file_creation_time = datetime.fromtimestamp(os.path.getctime(file_path))
-            if (current_time - file_creation_time).seconds > 300:  # 5 minutes
+            if (current_time - file_creation_time).seconds > 300:
                 try:
                     os.remove(file_path)
                 except:
                     pass
-        time.sleep(300)  # Run cleanup every 5 minutes
+        time.sleep(300)
 
-# Start cleanup thread
 cleanup_thread = threading.Thread(target=cleanup_old_files, daemon=True)
 cleanup_thread.start()
 
@@ -39,11 +59,9 @@ def speak():
         text = data.get('text', '')
         language = data.get('language', 'en')
 
-        # Generate unique filename
         filename = f"{uuid.uuid4()}.mp3"
         filepath = os.path.join(TEMP_DIR, filename)
 
-        # Generate speech
         tts = gTTS(text=text, lang=language)
         tts.save(filepath)
 
@@ -53,6 +71,83 @@ def speak():
             as_attachment=True,
             download_name=filename
         )
+    except Exception as e:
+        return {'error': str(e)}, 500
+
+@app.route('/translate', methods=['POST'])
+def translate():
+    try:
+        data = request.get_json()
+        input_text = data.get('text', '')
+        target_language = data.get('target_language', 'en')
+
+        if target_language == 'en':
+            prompt = f"Please translate the following text into English: {input_text}"
+        elif target_language == 'zh':
+            prompt = f"Please translate the following text into Chinese: {input_text}"
+        elif target_language == 'ja':
+            prompt = f"Please translate the following text into Japanese: {input_text}"
+        else:
+            prompt = input_text
+
+        messages = [
+            {"role": "system", "content": "You are a helpful AI assistant."},
+            {"role": "user", "content": prompt}
+        ]
+
+        text = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+        
+        model_inputs = tokenizer([text], return_tensors="pt").to(device)
+        generated_ids = language_model.generate(
+            model_inputs.input_ids,
+            max_new_tokens=512
+        )
+        generated_ids = [
+            output_ids[len(input_ids):] 
+            for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
+        ]
+
+        output_text = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+        
+        return jsonify({
+            'translated_text': output_text,
+            'target_language': target_language
+        })
+
+    except Exception as e:
+        return {'error': str(e)}, 500
+
+@app.route('/detect_persons', methods=['POST'])
+def detect_persons():
+    try:
+        # Get image data from request
+        file = request.files['image']
+        npimg = np.fromstring(file.read(), np.uint8)
+        img = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
+
+        # Convert to tensor
+        transform = transforms.ToTensor()
+        img_tensor = transform(img).unsqueeze(0)
+
+        # Detect persons
+        with torch.no_grad():
+            predictions = person_detection_model(img_tensor)[0]
+
+        # Process results
+        boxes = predictions['boxes'].numpy()
+        labels = predictions['labels'].numpy()
+        scores = predictions['scores'].numpy()
+
+        # Filter persons with confidence > 0.6
+        person_count = sum((label == 1 and score > 0.6) for label, score in zip(labels, scores))
+
+        return jsonify({
+            'person_count': int(person_count)
+        })
 
     except Exception as e:
         return {'error': str(e)}, 500

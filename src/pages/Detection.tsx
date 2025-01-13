@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
-import { Camera, StopCircle } from "lucide-react";
+import { Camera, StopCircle, Volume2, VolumeX, Users, Languages } from "lucide-react";
 import * as cocoSsd from "@tensorflow-models/coco-ssd";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import "@tensorflow/tfjs";
 
 interface Instruction {
@@ -23,6 +24,11 @@ const Detection = () => {
   const [videoLoaded, setVideoLoaded] = useState(false);
   const [instructions, setInstructions] = useState<Instruction[]>([]);
   const [language, setLanguage] = useState(() => localStorage.getItem("language") || "en");
+
+  const [isMuted, setIsMuted] = useState(false);
+  const [personCount, setPersonCount] = useState(0);
+  const [showTranslation, setShowTranslation] = useState(false);
+  const [translatedText, setTranslatedText] = useState("");
 
   const speakInstruction = async (text: string) => {
     try {
@@ -223,56 +229,130 @@ const Detection = () => {
     };
   }, [model, isActive, videoLoaded, language]);
 
-  return (
-    <div className="min-h-screen p-4">
-      <div className="max-w-2xl mx-auto">
-        <Button
-          variant="ghost"
-          className="mb-4"
-          onClick={() => {
-            stopCamera();
-            navigate("/");
-          }}
-        >
-          ← Back
-        </Button>
+  const toggleMute = () => {
+    setIsMuted(!isMuted);
+  };
 
-        <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-gray-100">
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className="w-full h-full object-cover"
-          />
-          <canvas
-            ref={canvasRef}
-            className="absolute inset-0 w-full h-full"
-          />
-          {!isActive && (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <Button
-                size="lg"
-                className="text-xl"
-                onClick={startCamera}
-                disabled={!model}
-              >
-                <Camera className="mr-2 h-6 w-6" />
-                {model ? "Start Camera" : "Loading Model..."}
-              </Button>
-            </div>
-          )}
+  const translateInstruction = async (text: string) => {
+    try {
+      const response = await fetch("http://localhost:5000/translate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          text,
+          target_language: language
+        }),
+      });
+
+      if (!response.ok) throw new Error("Translation failed");
+
+      const data = await response.json();
+      setTranslatedText(data.translated_text);
+      setShowTranslation(true);
+    } catch (error) {
+      console.error("Translation error:", error);
+      toast({
+        title: "Error",
+        description: "Failed to translate instruction",
+        variant: "destructive",
+      });
+    }
+  };
+
+  return (
+    <div className="min-h-screen p-4 bg-gradient-to-b from-gray-900 to-gray-800">
+      <div className="max-w-4xl mx-auto">
+        <div className="flex items-center justify-between mb-6">
+          <Button
+            variant="ghost"
+            className="text-white hover:text-gray-300"
+            onClick={() => {
+              stopCamera();
+              navigate("/");
+            }}
+          >
+            ← Back
+          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              className="bg-white/10 hover:bg-white/20"
+              onClick={toggleMute}
+            >
+              {isMuted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
+            </Button>
+            <Button
+              variant="outline"
+              className="bg-white/10 hover:bg-white/20"
+              onClick={() => setShowTranslation(!showTranslation)}
+            >
+              <Languages className="h-5 w-5" />
+            </Button>
+          </div>
         </div>
 
+        <Card className="bg-black/50 border-none shadow-xl mb-6">
+          <CardHeader>
+            <CardTitle className="text-white flex items-center gap-2">
+              <Users className="h-6 w-6" />
+              Navigation Assistant
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="relative aspect-video w-full overflow-hidden rounded-lg">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-cover"
+              />
+              <canvas
+                ref={canvasRef}
+                className="absolute inset-0 w-full h-full"
+              />
+              {!isActive && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/70">
+                  <Button
+                    size="lg"
+                    className="text-xl bg-blue-600 hover:bg-blue-700"
+                    onClick={startCamera}
+                    disabled={!model}
+                  >
+                    <Camera className="mr-2 h-6 w-6" />
+                    {model ? "Start Camera" : "Loading Model..."}
+                  </Button>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
         {instructions.length > 0 && (
-          <div className="mt-4 space-y-2">
+          <div className="space-y-2">
             {instructions.map((instruction, index) => (
               <Alert 
                 key={index} 
                 variant="default" 
-                className={`border-blue-500 ${instruction.distance.includes("Very Close") ? "bg-red-100 border-red-500" : ""}`}
+                className={`
+                  border-2 
+                  ${instruction.distance.includes("Very Close") 
+                    ? "bg-red-900/50 border-red-500" 
+                    : "bg-blue-900/50 border-blue-500"
+                  }
+                  text-white
+                `}
               >
-                <AlertDescription>{instruction.text}</AlertDescription>
+                <AlertDescription className="text-lg">
+                  {instruction.text}
+                  {showTranslation && translatedText && (
+                    <div className="mt-2 text-gray-300 text-sm">
+                      {translatedText}
+                    </div>
+                  )}
+                </AlertDescription>
               </Alert>
             ))}
           </div>
@@ -282,7 +362,7 @@ const Detection = () => {
           <Button
             variant="destructive"
             size="lg"
-            className="mt-4 w-full text-xl"
+            className="mt-6 w-full text-xl"
             onClick={stopCamera}
           >
             <StopCircle className="mr-2 h-6 w-6" />
