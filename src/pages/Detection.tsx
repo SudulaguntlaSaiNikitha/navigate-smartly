@@ -30,9 +30,24 @@ const Detection = () => {
   const [showTranslation, setShowTranslation] = useState(false);
   const [translatedText, setTranslatedText] = useState("");
 
+  // Add new state for tracking speech
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const instructionQueueRef = useRef<string[]>([]);
+  const lastSpokenTimeRef = useRef(Date.now());
+
   const speakInstruction = async (text: string) => {
+    const MINIMUM_GAP = 3000; // 3 seconds minimum gap between instructions
+    
+    // If currently speaking or not enough time has passed, queue the instruction
+    if (isSpeaking || (Date.now() - lastSpokenTimeRef.current) < MINIMUM_GAP) {
+      if (!instructionQueueRef.current.includes(text)) {
+        instructionQueueRef.current.push(text);
+      }
+      return;
+    }
+
     try {
-      // Add a check to ensure the backend is reachable
+      setIsSpeaking(true);
       const response = await fetch("http://localhost:5000/speak", {
         method: "POST",
         headers: {
@@ -55,19 +70,39 @@ const Detection = () => {
       if (!isMuted) {
         try {
           await audio.play();
+          lastSpokenTimeRef.current = Date.now();
+          
+          // Handle audio completion
+          audio.onended = () => {
+            URL.revokeObjectURL(audioUrl);
+            setIsSpeaking(false);
+            
+            // Process next instruction in queue if any
+            setTimeout(() => {
+              if (instructionQueueRef.current.length > 0) {
+                const nextInstruction = instructionQueueRef.current.shift();
+                if (nextInstruction) {
+                  speakInstruction(nextInstruction);
+                }
+              }
+            }, 1000); // 1 second gap between instructions
+          };
         } catch (playError) {
           console.error("Audio playback error:", playError);
+          setIsSpeaking(false);
           toast({
             title: "Playback Error",
             description: "Failed to play audio instruction",
             variant: "destructive",
           });
         }
+      } else {
+        URL.revokeObjectURL(audioUrl);
+        setIsSpeaking(false);
       }
-
-      audio.onended = () => URL.revokeObjectURL(audioUrl);
     } catch (error) {
       console.error("Speech generation error:", error);
+      setIsSpeaking(false);
       toast({
         title: "Backend Connection Error",
         description: "Failed to connect to speech service. Please ensure the backend server is running.",
@@ -137,9 +172,7 @@ const Detection = () => {
 
   useEffect(() => {
     let animationId: number;
-    let lastSpokenTime = 0;
-    const SPEAK_COOLDOWN = 3000; // 3 seconds cooldown between voice instructions
-
+    
     const detect = async () => {
       if (!model || !videoRef.current || !canvasRef.current || !isActive || !videoLoaded) return;
 
@@ -216,11 +249,14 @@ const Detection = () => {
           });
         }
 
-        // Speak instruction if cooldown has passed
-        const currentTime = Date.now();
-        if (currentTime - lastSpokenTime > SPEAK_COOLDOWN) {
+        // Speak instruction with improved timing
+        if (instruction && !isSpeaking && Date.now() - lastSpokenTimeRef.current > 3000) {
           speakInstruction(instruction);
-          lastSpokenTime = currentTime;
+        } else if (instruction) {
+          // Queue the instruction if we can't speak it right now
+          if (!instructionQueueRef.current.includes(instruction)) {
+            instructionQueueRef.current.push(instruction);
+          }
         }
       });
 
@@ -236,8 +272,10 @@ const Detection = () => {
       if (animationId) {
         cancelAnimationFrame(animationId);
       }
+      // Clear instruction queue on cleanup
+      instructionQueueRef.current = [];
     };
-  }, [model, isActive, videoLoaded, language]);
+  }, [model, isActive, videoLoaded, language, isSpeaking]);
 
   const toggleMute = () => {
     setIsMuted(!isMuted);
