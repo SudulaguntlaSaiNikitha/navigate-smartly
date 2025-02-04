@@ -7,6 +7,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import "@tensorflow/tfjs";
+import CurrencyDetection from "@/components/CurrencyDetection";
 
 interface Instruction {
   text: string;
@@ -415,6 +416,8 @@ const Detection = () => {
             ))}
           </div>
         )}
+
+        <CurrencyDetection onSpeak={speakInstruction} />
 
         {isActive && (
           <Button
