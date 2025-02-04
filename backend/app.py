@@ -15,6 +15,8 @@ from torchvision.models.detection import fasterrcnn_resnet50_fpn
 from PIL import Image
 import torch.nn as nn
 import torchvision.models as models
+import base64
+import io
 
 app = Flask(__name__)
 CORS(app, resources={
@@ -220,6 +222,64 @@ def detect_persons():
     except Exception as e:
         return {'error': str(e)}, 500
 
+@app.route('/detect_frame', methods=['POST'])
+def detect_frame():
+    try:
+        # Get base64 image from request
+        data = request.get_json()
+        base64_image = data['frame'].split(',')[1]
+        image_data = base64.b64decode(base64_image)
+        
+        # Convert to PIL Image for currency detection
+        image = Image.open(io.BytesIO(image_data))
+        
+        # Preprocess image for currency detection
+        transform = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+        
+        image_tensor = transform(image).unsqueeze(0).to(device)
+        
+        # Perform currency detection
+        with torch.no_grad():
+            outputs = currency_model(image_tensor)
+            _, predicted = torch.max(outputs, 1)
+            
+        # Map class index to currency value
+        currency_values = {
+            0: "10", 1: "20", 2: "50", 3: "100",
+            4: "200", 5: "500", 6: "2000"
+        }
+        
+        detected_value = currency_values.get(predicted.item(), None)
+        
+        # Convert to numpy array for person detection
+        nparr = np.frombuffer(image_data, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        # Convert to tensor for person detection
+        transform = transforms.ToTensor()
+        img_tensor = transform(img).unsqueeze(0)
+
+        # Detect persons
+        with torch.no_grad():
+            predictions = person_detection_model(img_tensor)[0]
+
+        # Process person detection results
+        boxes = predictions['boxes'].numpy()
+        labels = predictions['labels'].numpy()
+        scores = predictions['scores'].numpy()
+        person_count = sum((label == 1 and score > 0.6) for label, score in zip(labels, scores))
+
+        return jsonify({
+            'person_count': int(person_count),
+            'currency_value': detected_value
+        })
+
+    except Exception as e:
+        return {'error': str(e)}, 500
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
-        

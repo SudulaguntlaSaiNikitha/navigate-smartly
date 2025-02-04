@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
-import { Camera, StopCircle, Volume2, VolumeX, Languages, AlertTriangle } from "lucide-react";
+import { Camera, StopCircle, Volume2, VolumeX, Languages, AlertTriangle, IndianRupee } from "lucide-react";
 import * as cocoSsd from "@tensorflow-models/coco-ssd";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
@@ -35,6 +35,8 @@ const Detection = () => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const instructionQueueRef = useRef<string[]>([]);
   const lastSpokenTimeRef = useRef(Date.now());
+  const [lastCurrencyDetection, setLastCurrencyDetection] = useState<string | null>(null);
+  const lastCurrencyTimeRef = useRef(Date.now());
 
   const speakInstruction = async (text: string) => {
     const MINIMUM_GAP = 3000; // 3 seconds minimum gap between instructions
@@ -120,6 +122,70 @@ const Detection = () => {
     return "Far (> 4m)";
   };
 
+  const detectFrame = async (videoElement: HTMLVideoElement) => {
+    if (!videoElement || !canvasRef.current) return;
+    
+    const canvas = document.createElement('canvas');
+    canvas.width = videoElement.videoWidth;
+    canvas.height = videoElement.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    ctx.drawImage(videoElement, 0, 0);
+    const base64Frame = canvas.toDataURL('image/jpeg');
+
+    try {
+      const response = await fetch('http://localhost:5000/detect_frame', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ frame: base64Frame }),
+      });
+
+      if (!response.ok) throw new Error('Frame detection failed');
+
+      const data = await response.json();
+      
+      // Handle currency detection
+      if (data.currency_value && data.currency_value !== lastCurrencyDetection) {
+        const currencyMessage = `Detected ${data.currency_value} rupees note`;
+        if (Date.now() - lastCurrencyTimeRef.current > 5000) { // 5 seconds cooldown
+          speakInstruction(currencyMessage);
+          setLastCurrencyDetection(data.currency_value);
+          lastCurrencyTimeRef.current = Date.now();
+        }
+      }
+
+      // Update person count
+      setPersonCount(data.person_count);
+      
+      // Generate instructions based on detections
+      const newInstructions = [];
+      
+      if (data.person_count > 0) {
+        newInstructions.push({
+          text: `${data.person_count} person${data.person_count > 1 ? 's' : ''} detected`,
+          region: 'center',
+          distance: 'medium'
+        });
+      }
+      
+      if (data.currency_value) {
+        newInstructions.push({
+          text: `${data.currency_value} rupees note detected`,
+          region: 'center',
+          distance: 'close'
+        });
+      }
+      
+      setInstructions(newInstructions);
+
+    } catch (error) {
+      console.error('Frame detection error:', error);
+    }
+  };
+
   useEffect(() => {
     const loadModel = async () => {
       const loadedModel = await cocoSsd.load();
@@ -177,91 +243,12 @@ const Detection = () => {
     const detect = async () => {
       if (!model || !videoRef.current || !canvasRef.current || !isActive || !videoLoaded) return;
 
-      if (videoRef.current.readyState !== 4 || 
-          videoRef.current.videoWidth === 0 || 
-          videoRef.current.videoHeight === 0) {
+      if (videoRef.current.readyState !== 4) {
         animationId = requestAnimationFrame(detect);
         return;
       }
 
-      const predictions = await model.detect(videoRef.current);
-      
-      const ctx = canvasRef.current.getContext("2d");
-      if (!ctx) return;
-
-      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-
-      // Draw region divisions
-      const leftBoundary = ctx.canvas.width / 3;
-      const rightBoundary = (2 * ctx.canvas.width) / 3;
-
-      ctx.strokeStyle = "#3B82F6";
-      ctx.setLineDash([5, 5]);
-      ctx.beginPath();
-      ctx.moveTo(leftBoundary, 0);
-      ctx.lineTo(leftBoundary, ctx.canvas.height);
-      ctx.moveTo(rightBoundary, 0);
-      ctx.lineTo(rightBoundary, ctx.canvas.height);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      const newInstructions: Instruction[] = [];
-
-      predictions.forEach(prediction => {
-        const [x, y, width, height] = prediction.bbox;
-        const objectCenterX = x + width / 2;
-        const distance = estimateDistance(height, ctx.canvas.height);
-        
-        ctx.strokeStyle = "#3B82F6";
-        ctx.lineWidth = 2;
-        ctx.strokeRect(x, y, width, height);
-
-        // Draw label with distance
-        ctx.fillStyle = "#3B82F6";
-        ctx.fillRect(x, y - 35, prediction.class.length * 14 + distance.length * 8, 35);
-        
-        ctx.fillStyle = "white";
-        ctx.font = "18px Arial";
-        ctx.fillText(`${prediction.class} - ${distance}`, x + 5, y - 10);
-
-        const baseInstruction = distance === "Very Close (< 1m)" ? "CAUTION! " : "";
-        let instruction = "";
-        
-        if (objectCenterX < leftBoundary) {
-          instruction = `${baseInstruction}${prediction.class} on the left (${distance}), move to the center or right.`;
-          newInstructions.push({
-            text: instruction,
-            region: "left",
-            distance
-          });
-        } else if (objectCenterX > rightBoundary) {
-          instruction = `${baseInstruction}${prediction.class} on the right (${distance}), move to the center or left.`;
-          newInstructions.push({
-            text: instruction,
-            region: "right",
-            distance
-          });
-        } else {
-          instruction = `${baseInstruction}${prediction.class} in the center (${distance}), avoid or move left/right.`;
-          newInstructions.push({
-            text: instruction,
-            region: "center",
-            distance
-          });
-        }
-
-        // Speak instruction with improved timing
-        if (instruction && !isSpeaking && Date.now() - lastSpokenTimeRef.current > 3000) {
-          speakInstruction(instruction);
-        } else if (instruction) {
-          // Queue the instruction if we can't speak it right now
-          if (!instructionQueueRef.current.includes(instruction)) {
-            instructionQueueRef.current.push(instruction);
-          }
-        }
-      });
-
-      setInstructions(newInstructions);
+      await detectFrame(videoRef.current);
       animationId = requestAnimationFrame(detect);
     };
 
@@ -273,7 +260,6 @@ const Detection = () => {
       if (animationId) {
         cancelAnimationFrame(animationId);
       }
-      // Clear instruction queue on cleanup
       instructionQueueRef.current = [];
     };
   }, [model, isActive, videoLoaded, language, isSpeaking]);
