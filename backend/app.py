@@ -12,9 +12,11 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from torchvision import transforms
 from torchvision.models.detection import fasterrcnn_resnet50_fpn
+from PIL import Image
+import torch.nn as nn
+import torchvision.models as models
 
 app = Flask(__name__)
-# Configure CORS to accept requests from any origin
 CORS(app, resources={
     r"/*": {
         "origins": "*",
@@ -29,6 +31,25 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 
 # Load ML models
 device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# Currency Detection Model
+class CurrencyDetectionModel(nn.Module):
+    def __init__(self, num_classes=10):  # Assuming 10 different currency note values
+        super(CurrencyDetectionModel, self).__init__()
+        self.model = models.resnet34(pretrained=True)
+        num_features = self.model.fc.in_features
+        self.model.fc = nn.Linear(num_features, num_classes)
+    
+    def forward(self, x):
+        return self.model(x)
+
+try:
+    currency_model = CurrencyDetectionModel().to(device)
+    currency_model.load_state_dict(torch.load('best_weights/IC_ResNet34_9880.pth', map_location=device))
+    currency_model.eval()
+except Exception as e:
+    print(f"Error loading currency model: {e}")
+
 language_model_name = "Qwen/Qwen2-1.5B-Instruct"
 
 try:
@@ -58,6 +79,40 @@ def cleanup_old_files():
 
 cleanup_thread = threading.Thread(target=cleanup_old_files, daemon=True)
 cleanup_thread.start()
+
+@app.route('/detect_currency', methods=['POST'])
+def detect_currency():
+    try:
+        file = request.files['image']
+        image = Image.open(file)
+        
+        # Preprocess image
+        transform = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+        
+        image_tensor = transform(image).unsqueeze(0).to(device)
+        
+        with torch.no_grad():
+            outputs = currency_model(image_tensor)
+            _, predicted = torch.max(outputs, 1)
+            
+        # Map class index to currency value
+        currency_values = {
+            0: "10", 1: "20", 2: "50", 3: "100",
+            4: "200", 5: "500", 6: "2000"
+        }
+        
+        detected_value = currency_values.get(predicted.item(), "unknown")
+        
+        return jsonify({
+            'currency_value': detected_value
+        })
+
+    except Exception as e:
+        return {'error': str(e)}, 500
 
 @app.route('/speak', methods=['POST', 'OPTIONS'])
 def speak():
